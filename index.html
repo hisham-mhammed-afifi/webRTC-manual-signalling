@@ -1,0 +1,1817 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+WebRTC Manual Signaling Demo
+================================================================================
+A completely serverless WebRTC video calling demonstration where signaling
+happens manually through copy/paste. No server required - just two browsers
+and any communication channel (email, chat, carrier pigeon, etc.)
+
+Author: WebRTC Educational Demo
+License: MIT
+
+HOW TO USE:
+-----------
+FOR CALLER (Person A):
+1. Click "Start Camera" to enable your camera/microphone
+2. Click "Create Offer" to generate a connection offer
+3. Copy the offer JSON and send it to your peer via any means
+4. Wait for peer's answer, paste it in the Answer section
+5. Click "Accept Answer" to complete your side of signaling
+6. Copy ICE candidates as they appear and send to peer
+7. Paste peer's ICE candidates and click "Add ICE"
+
+FOR CALLEE (Person B):
+1. Click "Start Camera" to enable your camera/microphone
+2. Paste the received offer in the Offer section
+3. Click "Accept Offer" - this generates an answer automatically
+4. Copy the generated answer and send it back to the caller
+5. Exchange ICE candidates same as caller
+
+CONNECTION COMPLETE:
+- Status indicator turns green when connected
+- Remote video stream appears in the right panel
+- Click "Hang Up" to end the call and reset
+================================================================================
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Manual Signaling Demo</title>
+    <style>
+        /* ============================================
+           CSS VARIABLES & THEMING
+           ============================================ */
+        :root {
+            --color-primary: #2563eb;
+            --color-primary-hover: #1d4ed8;
+            --color-success: #16a34a;
+            --color-warning: #ca8a04;
+            --color-danger: #dc2626;
+            --color-danger-hover: #b91c1c;
+            --color-bg: #f8fafc;
+            --color-surface: #ffffff;
+            --color-text: #1e293b;
+            --color-text-muted: #64748b;
+            --color-border: #e2e8f0;
+            --border-radius: 8px;
+            --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+            --transition: all 0.2s ease;
+        }
+
+        /* ============================================
+           RESET & BASE STYLES
+           ============================================ */
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background-color: var(--color-bg);
+            color: var(--color-text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        /* ============================================
+           LAYOUT
+           ============================================ */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: var(--color-surface);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .header-title h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        /* ============================================
+           VIDEO SECTION
+           ============================================ */
+        .video-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        @media (max-width: 768px) {
+            .video-section {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .video-container {
+            background: #1e293b;
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            position: relative;
+            aspect-ratio: 16 / 9;
+            box-shadow: var(--shadow-md);
+        }
+
+        .video-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .video-label {
+            position: absolute;
+            bottom: 0.75rem;
+            left: 0.75rem;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .video-placeholder {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #64748b;
+            text-align: center;
+        }
+
+        .video-placeholder svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
+
+        /* ============================================
+           STATUS INDICATOR
+           ============================================ */
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            background: var(--color-surface);
+            border-radius: var(--border-radius);
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow);
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--color-danger);
+            transition: var(--transition);
+        }
+
+        .status-indicator.connecting {
+            background: var(--color-warning);
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-indicator.connected {
+            background: var(--color-success);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .status-text {
+            font-weight: 500;
+            text-transform: uppercase;
+            font-size: 0.875rem;
+            letter-spacing: 0.05em;
+        }
+
+        .role-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            background: var(--color-primary);
+            color: white;
+            display: none;
+        }
+
+        .role-badge.visible {
+            display: inline-block;
+        }
+
+        /* ============================================
+           BUTTONS
+           ============================================ */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.625rem 1.25rem;
+            border: none;
+            border-radius: var(--border-radius);
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--transition);
+            white-space: nowrap;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: var(--color-primary);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--color-primary-hover);
+        }
+
+        .btn-success {
+            background: var(--color-success);
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #15803d;
+        }
+
+        .btn-danger {
+            background: var(--color-danger);
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: var(--color-danger-hover);
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--color-border);
+            color: var(--color-text);
+        }
+
+        .btn-outline:hover:not(:disabled) {
+            background: var(--color-bg);
+            border-color: var(--color-text-muted);
+        }
+
+        .btn-sm {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.8125rem;
+        }
+
+        .btn svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        /* ============================================
+           CARDS / SECTIONS
+           ============================================ */
+        .card {
+            background: var(--color-surface);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            margin-bottom: 1rem;
+            overflow: hidden;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.875rem 1rem;
+            background: var(--color-bg);
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .card-header h2 {
+            font-size: 0.9375rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .step-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            background: var(--color-primary);
+            color: white;
+            border-radius: 50%;
+            font-size: 0.75rem;
+            font-weight: 700;
+        }
+
+        .card-body {
+            padding: 1rem;
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.75rem;
+        }
+
+        .or-divider {
+            display: flex;
+            align-items: center;
+            color: var(--color-text-muted);
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: 0 0.5rem;
+        }
+
+        /* ============================================
+           TEXTAREAS
+           ============================================ */
+        .textarea-wrapper {
+            position: relative;
+        }
+
+        .textarea-wrapper textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 0.75rem;
+            padding-right: 4rem;
+            border: 1px solid var(--color-border);
+            border-radius: var(--border-radius);
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.8125rem;
+            line-height: 1.5;
+            resize: vertical;
+            transition: var(--transition);
+        }
+
+        .textarea-wrapper textarea:focus {
+            outline: none;
+            border-color: var(--color-primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .textarea-wrapper textarea:read-only {
+            background: var(--color-bg);
+            cursor: default;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            padding: 0.375rem;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .copy-btn:hover {
+            background: var(--color-bg);
+        }
+
+        .copy-btn svg {
+            width: 16px;
+            height: 16px;
+            color: var(--color-text-muted);
+        }
+
+        .copy-btn.copied svg {
+            color: var(--color-success);
+        }
+
+        /* ============================================
+           ICE CANDIDATES SECTION
+           ============================================ */
+        .ice-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        @media (max-width: 768px) {
+            .ice-section {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .ice-subsection label {
+            display: block;
+            font-size: 0.8125rem;
+            font-weight: 500;
+            color: var(--color-text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .ice-count {
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+            margin-left: 0.5rem;
+        }
+
+        /* ============================================
+           DEBUG LOG
+           ============================================ */
+        .log-container {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #0f172a;
+            border-radius: var(--border-radius);
+            padding: 0.75rem;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.75rem;
+        }
+
+        .log-entry {
+            color: #94a3b8;
+            margin-bottom: 0.25rem;
+            word-break: break-word;
+        }
+
+        .log-entry .timestamp {
+            color: #64748b;
+            margin-right: 0.5rem;
+        }
+
+        .log-entry.info { color: #38bdf8; }
+        .log-entry.success { color: #4ade80; }
+        .log-entry.warning { color: #fbbf24; }
+        .log-entry.error { color: #f87171; }
+
+        /* ============================================
+           HOW TO USE PANEL
+           ============================================ */
+        .help-panel {
+            margin-bottom: 1.5rem;
+        }
+
+        .help-toggle {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.875rem 1rem;
+            background: var(--color-surface);
+            border: none;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-size: 0.9375rem;
+            font-weight: 500;
+            color: var(--color-text);
+            box-shadow: var(--shadow);
+            transition: var(--transition);
+        }
+
+        .help-toggle:hover {
+            background: var(--color-bg);
+        }
+
+        .help-toggle svg {
+            width: 20px;
+            height: 20px;
+            transition: transform 0.2s ease;
+        }
+
+        .help-toggle.active svg {
+            transform: rotate(180deg);
+        }
+
+        .help-content {
+            display: none;
+            background: var(--color-surface);
+            border-radius: 0 0 var(--border-radius) var(--border-radius);
+            padding: 1rem;
+            margin-top: -0.5rem;
+            box-shadow: var(--shadow);
+        }
+
+        .help-content.visible {
+            display: block;
+        }
+
+        .help-columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+
+        @media (max-width: 768px) {
+            .help-columns {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .help-column h3 {
+            font-size: 0.9375rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: var(--color-primary);
+        }
+
+        .help-column ol {
+            margin-left: 1.25rem;
+            font-size: 0.875rem;
+        }
+
+        .help-column li {
+            margin-bottom: 0.5rem;
+        }
+
+        /* ============================================
+           DATA CHANNEL CHAT (BONUS FEATURE)
+           ============================================ */
+        .chat-section {
+            display: none;
+        }
+
+        .chat-section.visible {
+            display: block;
+        }
+
+        .chat-messages {
+            max-height: 150px;
+            overflow-y: auto;
+            background: var(--color-bg);
+            border-radius: var(--border-radius);
+            padding: 0.75rem;
+            margin-bottom: 0.75rem;
+            font-size: 0.875rem;
+        }
+
+        .chat-message {
+            margin-bottom: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            border-radius: 4px;
+        }
+
+        .chat-message.sent {
+            background: var(--color-primary);
+            color: white;
+            margin-left: auto;
+            max-width: 75%;
+            width: fit-content;
+        }
+
+        .chat-message.received {
+            background: var(--color-surface);
+            margin-right: 2rem;
+        }
+
+        .chat-input-wrapper {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .chat-input-wrapper input {
+            flex: 1;
+            padding: 0.625rem 0.75rem;
+            border: 1px solid var(--color-border);
+            border-radius: var(--border-radius);
+            font-size: 0.875rem;
+        }
+
+        .chat-input-wrapper input:focus {
+            outline: none;
+            border-color: var(--color-primary);
+        }
+
+        /* ============================================
+           OPTIONS PANEL
+           ============================================ */
+        .options-row {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            padding: 0.75rem 1rem;
+            background: var(--color-bg);
+            border-radius: var(--border-radius);
+            margin-bottom: 1rem;
+            font-size: 0.875rem;
+        }
+
+        .option-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .option-item input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        .option-item label {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        /* ============================================
+           UTILITIES
+           ============================================ */
+        .hidden {
+            display: none !important;
+        }
+
+        .text-muted {
+            color: var(--color-text-muted);
+        }
+
+        .text-sm {
+            font-size: 0.875rem;
+        }
+
+        .mt-2 {
+            margin-top: 0.5rem;
+        }
+
+        .mb-2 {
+            margin-bottom: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="header-title">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M15.6 11.6L22 7v10l-6.4-4.5v-1zM4 5h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7c0-1.1.9-2 2-2z"/>
+                </svg>
+                <h1>WebRTC Manual Signaling</h1>
+            </div>
+            <div class="header-actions">
+                <button id="btnStartCamera" class="btn btn-primary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                    </svg>
+                    Start Camera
+                </button>
+                <button id="btnHangUp" class="btn btn-danger" disabled>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                    Hang Up
+                </button>
+            </div>
+        </header>
+
+        <!-- How To Use Panel -->
+        <div class="help-panel">
+            <button class="help-toggle" id="helpToggle" aria-expanded="false" aria-controls="helpContent">
+                <span>📖 How to Use This Demo</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="6 9 12 15 18 9"/>
+                </svg>
+            </button>
+            <div class="help-content" id="helpContent">
+                <div class="help-columns">
+                    <div class="help-column">
+                        <h3>👤 For Caller (Person A)</h3>
+                        <ol>
+                            <li>Click <strong>Start Camera</strong> to enable media</li>
+                            <li>Click <strong>Create Offer</strong></li>
+                            <li>Copy the offer JSON and send to peer</li>
+                            <li>Wait for peer's answer, paste it</li>
+                            <li>Click <strong>Accept Answer</strong></li>
+                            <li>Exchange ICE candidates with peer</li>
+                        </ol>
+                    </div>
+                    <div class="help-column">
+                        <h3>👥 For Callee (Person B)</h3>
+                        <ol>
+                            <li>Click <strong>Start Camera</strong> to enable media</li>
+                            <li>Paste received offer from caller</li>
+                            <li>Click <strong>Accept Offer</strong></li>
+                            <li>Copy generated answer, send to caller</li>
+                            <li>Exchange ICE candidates with peer</li>
+                            <li>Connection established! 🎉</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Options -->
+        <div class="options-row">
+            <div class="option-item">
+                <input type="checkbox" id="optAudioOnly">
+                <label for="optAudioOnly">Audio Only Mode</label>
+            </div>
+            <div class="option-item">
+                <input type="checkbox" id="optWaitIce" checked>
+                <label for="optWaitIce">Wait for all ICE candidates (recommended)</label>
+            </div>
+        </div>
+
+        <!-- Video Section -->
+        <div class="video-section">
+            <div class="video-container">
+                <video id="localVideo" autoplay playsinline muted></video>
+                <div class="video-label">You (Local)</div>
+                <div class="video-placeholder" id="localPlaceholder">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+                    </svg>
+                    <p>Camera off</p>
+                </div>
+            </div>
+            <div class="video-container">
+                <video id="remoteVideo" autoplay playsinline></video>
+                <div class="video-label">Peer (Remote)</div>
+                <div class="video-placeholder" id="remotePlaceholder">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/>
+                    </svg>
+                    <p>Waiting for peer...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-indicator" id="statusIndicator"></div>
+            <span class="status-text" id="statusText">Disconnected</span>
+            <span class="role-badge" id="roleBadge">Caller</span>
+        </div>
+
+        <!-- Step 1: Offer -->
+        <div class="card">
+            <div class="card-header">
+                <h2><span class="step-number">1</span> Create or Accept Offer</h2>
+            </div>
+            <div class="card-body">
+                <div class="card-actions">
+                    <button id="btnCreateOffer" class="btn btn-primary" disabled>Create Offer</button>
+                    <span class="or-divider">OR</span>
+                    <button id="btnAcceptOffer" class="btn btn-success" disabled>Accept Offer</button>
+                </div>
+                <div class="textarea-wrapper">
+                    <textarea id="offerSdp" placeholder="Offer SDP will appear here when you create one, or paste a received offer here..." aria-label="Offer SDP"></textarea>
+                    <button class="copy-btn" id="copyOffer" title="Copy to clipboard" aria-label="Copy offer">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: Answer -->
+        <div class="card">
+            <div class="card-header">
+                <h2><span class="step-number">2</span> Handle Answer</h2>
+            </div>
+            <div class="card-body">
+                <div class="card-actions">
+                    <button id="btnAcceptAnswer" class="btn btn-success" disabled>Accept Answer</button>
+                </div>
+                <div class="textarea-wrapper">
+                    <textarea id="answerSdp" placeholder="Answer SDP will appear here (if you're the callee), or paste the received answer here (if you're the caller)..." aria-label="Answer SDP"></textarea>
+                    <button class="copy-btn" id="copyAnswer" title="Copy to clipboard" aria-label="Copy answer">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: ICE Candidates -->
+        <div class="card">
+            <div class="card-header">
+                <h2><span class="step-number">3</span> Exchange ICE Candidates</h2>
+                <span class="ice-count" id="iceCount">0 candidates gathered</span>
+            </div>
+            <div class="card-body">
+                <div class="ice-section">
+                    <div class="ice-subsection">
+                        <label>Outgoing ICE Candidates (send these to peer)</label>
+                        <div class="textarea-wrapper">
+                            <textarea id="outgoingIce" readonly placeholder="ICE candidates will appear here as they are gathered..." aria-label="Outgoing ICE candidates"></textarea>
+                            <button class="copy-btn" id="copyIce" title="Copy all ICE candidates" aria-label="Copy ICE candidates">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="ice-subsection">
+                        <label>Incoming ICE Candidates (paste from peer)</label>
+                        <div class="textarea-wrapper">
+                            <textarea id="incomingIce" placeholder="Paste received ICE candidates here..." aria-label="Incoming ICE candidates"></textarea>
+                        </div>
+                        <button id="btnAddIce" class="btn btn-primary btn-sm mt-2" disabled>Add ICE Candidates</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Channel Chat (Bonus Feature) -->
+        <div class="card chat-section" id="chatSection">
+            <div class="card-header">
+                <h2>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    Data Channel Chat
+                </h2>
+            </div>
+            <div class="card-body">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="text-muted text-sm">Chat messages will appear here when connected...</div>
+                </div>
+                <div class="chat-input-wrapper">
+                    <input type="text" id="chatInput" placeholder="Type a message..." disabled aria-label="Chat message">
+                    <button id="btnSendChat" class="btn btn-primary btn-sm" disabled>Send</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Debug Log -->
+        <div class="card">
+            <div class="card-header">
+                <h2>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                    </svg>
+                    Debug Log
+                </h2>
+                <div>
+                    <button id="btnCopyLog" class="btn btn-outline btn-sm">Copy Log</button>
+                    <button id="btnClearLog" class="btn btn-outline btn-sm">Clear</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="log-container" id="logContainer" role="log" aria-live="polite">
+                    <div class="log-entry info">
+                        <span class="timestamp">[--:--:--]</span>
+                        WebRTC Manual Signaling Demo initialized. Click "Start Camera" to begin.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // CONFIGURATION
+        // ============================================
+
+        /**
+         * ICE server configuration using Google's public STUN servers.
+         * STUN servers help discover the public IP address and port
+         * for NAT traversal, enabling peer-to-peer connections.
+         */
+        const ICE_SERVERS = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+            ]
+        };
+
+        /**
+         * Media constraints for getUserMedia.
+         * Configures audio with echo cancellation and noise suppression,
+         * and video at 720p resolution using the front-facing camera.
+         */
+        const getMediaConstraints = () => ({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            },
+            video: document.getElementById('optAudioOnly').checked ? false : {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: 'user'
+            }
+        });
+
+        // ============================================
+        // STATE MANAGEMENT
+        // ============================================
+
+        /**
+         * Application state object tracking all WebRTC-related state.
+         * This centralized state makes it easier to manage and debug
+         * the complex state transitions in WebRTC applications.
+         */
+        const state = {
+            localStream: null,           // MediaStream from getUserMedia
+            peerConnection: null,        // RTCPeerConnection instance
+            dataChannel: null,           // RTCDataChannel for chat
+            iceCandidates: [],           // Array of gathered ICE candidates
+            connectionState: 'disconnected', // disconnected | connecting | connected
+            role: null,                  // 'caller' | 'callee' | null
+            iceGatheringComplete: false  // Whether ICE gathering is finished
+        };
+
+        // ============================================
+        // DOM ELEMENT REFERENCES
+        // ============================================
+
+        const elements = {
+            // Videos
+            localVideo: document.getElementById('localVideo'),
+            remoteVideo: document.getElementById('remoteVideo'),
+            localPlaceholder: document.getElementById('localPlaceholder'),
+            remotePlaceholder: document.getElementById('remotePlaceholder'),
+
+            // Buttons
+            btnStartCamera: document.getElementById('btnStartCamera'),
+            btnHangUp: document.getElementById('btnHangUp'),
+            btnCreateOffer: document.getElementById('btnCreateOffer'),
+            btnAcceptOffer: document.getElementById('btnAcceptOffer'),
+            btnAcceptAnswer: document.getElementById('btnAcceptAnswer'),
+            btnAddIce: document.getElementById('btnAddIce'),
+            btnSendChat: document.getElementById('btnSendChat'),
+            btnCopyLog: document.getElementById('btnCopyLog'),
+            btnClearLog: document.getElementById('btnClearLog'),
+
+            // Textareas
+            offerSdp: document.getElementById('offerSdp'),
+            answerSdp: document.getElementById('answerSdp'),
+            outgoingIce: document.getElementById('outgoingIce'),
+            incomingIce: document.getElementById('incomingIce'),
+
+            // Copy buttons
+            copyOffer: document.getElementById('copyOffer'),
+            copyAnswer: document.getElementById('copyAnswer'),
+            copyIce: document.getElementById('copyIce'),
+
+            // Status
+            statusIndicator: document.getElementById('statusIndicator'),
+            statusText: document.getElementById('statusText'),
+            roleBadge: document.getElementById('roleBadge'),
+            iceCount: document.getElementById('iceCount'),
+
+            // Chat
+            chatSection: document.getElementById('chatSection'),
+            chatMessages: document.getElementById('chatMessages'),
+            chatInput: document.getElementById('chatInput'),
+
+            // Log
+            logContainer: document.getElementById('logContainer'),
+
+            // Help
+            helpToggle: document.getElementById('helpToggle'),
+            helpContent: document.getElementById('helpContent'),
+
+            // Options
+            optAudioOnly: document.getElementById('optAudioOnly'),
+            optWaitIce: document.getElementById('optWaitIce')
+        };
+
+        // ============================================
+        // UTILITY FUNCTIONS
+        // ============================================
+
+        /**
+         * Logs a message to the debug console with timestamp and severity level.
+         * @param {string} message - The message to log
+         * @param {string} level - Log level: 'info' | 'success' | 'warning' | 'error'
+         */
+        function log(message, level = 'info') {
+            const now = new Date();
+            const timestamp = now.toLocaleTimeString('en-US', { hour12: false });
+
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${level}`;
+            entry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${escapeHtml(message)}`;
+
+            elements.logContainer.appendChild(entry);
+            elements.logContainer.scrollTop = elements.logContainer.scrollHeight;
+
+            // Also log to browser console for debugging
+            console.log(`[${level.toUpperCase()}] ${message}`);
+        }
+
+        /**
+         * Escapes HTML special characters to prevent XSS.
+         * @param {string} text - Text to escape
+         * @returns {string} Escaped text safe for innerHTML
+         */
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        /**
+         * Copies text to clipboard and provides visual feedback.
+         * @param {string} text - Text to copy
+         * @param {HTMLElement} button - Button element for visual feedback
+         */
+        async function copyToClipboard(text, button) {
+            try {
+                await navigator.clipboard.writeText(text);
+                button.classList.add('copied');
+                log('Copied to clipboard', 'success');
+                setTimeout(() => button.classList.remove('copied'), 2000);
+            } catch (err) {
+                log(`Failed to copy: ${err.message}`, 'error');
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                button.classList.add('copied');
+                setTimeout(() => button.classList.remove('copied'), 2000);
+            }
+        }
+
+        /**
+         * Safely parses JSON with error handling.
+         * @param {string} jsonString - JSON string to parse
+         * @returns {object|null} Parsed object or null if invalid
+         */
+        function safeJsonParse(jsonString) {
+            try {
+                return JSON.parse(jsonString);
+            } catch (err) {
+                log(`Invalid JSON format: ${err.message}`, 'error');
+                return null;
+            }
+        }
+
+        // ============================================
+        // UI UPDATE FUNCTIONS
+        // ============================================
+
+        /**
+         * Updates the connection status indicator and text.
+         * @param {string} status - Status: 'disconnected' | 'connecting' | 'connected'
+         */
+        function updateConnectionStatus(status) {
+            state.connectionState = status;
+
+            elements.statusIndicator.className = 'status-indicator';
+            if (status === 'connecting') {
+                elements.statusIndicator.classList.add('connecting');
+            } else if (status === 'connected') {
+                elements.statusIndicator.classList.add('connected');
+            }
+
+            const statusTexts = {
+                disconnected: 'Disconnected',
+                connecting: 'Connecting...',
+                connected: 'Connected'
+            };
+            elements.statusText.textContent = statusTexts[status] || status;
+        }
+
+        /**
+         * Updates the role badge display.
+         * @param {string|null} role - Role: 'caller' | 'callee' | null
+         */
+        function updateRoleBadge(role) {
+            state.role = role;
+            elements.roleBadge.textContent = role ? role.charAt(0).toUpperCase() + role.slice(1) : '';
+            elements.roleBadge.classList.toggle('visible', role !== null);
+        }
+
+        /**
+         * Updates the ICE candidate count display.
+         */
+        function updateIceCount() {
+            const count = state.iceCandidates.length;
+            const gatheringStatus = state.iceGatheringComplete ? ' (complete)' : ' (gathering...)';
+            elements.iceCount.textContent = `${count} candidate${count !== 1 ? 's' : ''} gathered${state.peerConnection ? gatheringStatus : ''}`;
+        }
+
+        /**
+         * Updates button states based on current application state.
+         */
+        function updateButtonStates() {
+            const hasLocalStream = state.localStream !== null;
+            const hasConnection = state.peerConnection !== null;
+            const isConnected = state.connectionState === 'connected';
+            const hasRole = state.role !== null;
+
+            elements.btnStartCamera.disabled = hasLocalStream;
+            elements.btnHangUp.disabled = !hasLocalStream && !hasConnection;
+            elements.btnCreateOffer.disabled = !hasLocalStream || hasRole;
+            elements.btnAcceptOffer.disabled = !hasLocalStream || hasRole || !elements.offerSdp.value.trim();
+            elements.btnAcceptAnswer.disabled = state.role !== 'caller' || !elements.answerSdp.value.trim();
+            elements.btnAddIce.disabled = !hasConnection || !elements.incomingIce.value.trim();
+
+            // Chat controls
+            elements.chatInput.disabled = !isConnected || !state.dataChannel;
+            elements.btnSendChat.disabled = !isConnected || !state.dataChannel;
+
+            // Show chat section when connected
+            elements.chatSection.classList.toggle('visible', isConnected);
+        }
+
+        /**
+         * Resets the entire UI to initial state.
+         */
+        function resetUI() {
+            elements.offerSdp.value = '';
+            elements.offerSdp.readOnly = false;
+            elements.answerSdp.value = '';
+            elements.answerSdp.readOnly = false;
+            elements.outgoingIce.value = '';
+            elements.incomingIce.value = '';
+
+            elements.localPlaceholder.style.display = 'block';
+            elements.remotePlaceholder.style.display = 'block';
+
+            elements.chatMessages.innerHTML = '<div class="text-muted text-sm">Chat messages will appear here when connected...</div>';
+            elements.chatInput.value = '';
+
+            updateConnectionStatus('disconnected');
+            updateRoleBadge(null);
+            updateIceCount();
+            updateButtonStates();
+        }
+
+        // ============================================
+        // MEDIA HANDLING
+        // ============================================
+
+        /**
+         * Starts the local media stream (camera/microphone).
+         * Requests permissions and displays the local video feed.
+         */
+        async function startLocalMedia() {
+            log('Requesting camera and microphone access...');
+
+            try {
+                const constraints = getMediaConstraints();
+                log(`Media constraints: ${JSON.stringify(constraints)}`);
+
+                state.localStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+                elements.localVideo.srcObject = state.localStream;
+                elements.localPlaceholder.style.display = 'none';
+
+                const tracks = state.localStream.getTracks();
+                log(`Local media started: ${tracks.map(t => t.kind).join(', ')}`, 'success');
+
+                updateButtonStates();
+            } catch (err) {
+                let errorMessage = err.message;
+
+                // Provide user-friendly error messages
+                if (err.name === 'NotAllowedError') {
+                    errorMessage = 'Camera/microphone permission denied. Please allow access and try again.';
+                } else if (err.name === 'NotFoundError') {
+                    errorMessage = 'No camera or microphone found. Please connect a device and try again.';
+                } else if (err.name === 'NotReadableError') {
+                    errorMessage = 'Camera/microphone is already in use by another application.';
+                }
+
+                log(`Failed to start media: ${errorMessage}`, 'error');
+                alert(errorMessage);
+            }
+        }
+
+        /**
+         * Stops all local media tracks and releases resources.
+         */
+        function stopLocalMedia() {
+            if (state.localStream) {
+                state.localStream.getTracks().forEach(track => {
+                    track.stop();
+                    log(`Stopped ${track.kind} track`);
+                });
+                state.localStream = null;
+                elements.localVideo.srcObject = null;
+            }
+        }
+
+        // ============================================
+        // WEBRTC CORE FUNCTIONS
+        // ============================================
+
+        /**
+         * Creates a new RTCPeerConnection with all event handlers configured.
+         * This is the core WebRTC object that manages the P2P connection.
+         */
+        function createPeerConnection() {
+            log('Creating new RTCPeerConnection...');
+
+            const pc = new RTCPeerConnection(ICE_SERVERS);
+
+            // Add local media tracks to the connection
+            if (state.localStream) {
+                state.localStream.getTracks().forEach(track => {
+                    pc.addTrack(track, state.localStream);
+                    log(`Added ${track.kind} track to peer connection`);
+                });
+            }
+
+            // ---- Event Handlers ----
+
+            /**
+             * Handle incoming remote tracks.
+             * This fires when the remote peer's media arrives.
+             */
+            pc.ontrack = (event) => {
+                log(`Received remote ${event.track.kind} track`, 'success');
+                if (event.streams && event.streams[0]) {
+                    elements.remoteVideo.srcObject = event.streams[0];
+                    elements.remotePlaceholder.style.display = 'none';
+                }
+            };
+
+            /**
+             * Handle ICE candidate generation.
+             * Each candidate represents a potential connection path.
+             */
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    // New candidate found
+                    state.iceCandidates.push(event.candidate.toJSON());
+                    log(`ICE candidate gathered: ${event.candidate.candidate.substring(0, 50)}...`);
+
+                    // Update the outgoing ICE textarea with all candidates
+                    elements.outgoingIce.value = JSON.stringify(state.iceCandidates, null, 2);
+                    updateIceCount();
+                } else {
+                    // ICE gathering complete (null candidate)
+                    state.iceGatheringComplete = true;
+                    log('ICE gathering complete', 'success');
+                    updateIceCount();
+
+                    // If waiting for all candidates, update the offer/answer now
+                    if (elements.optWaitIce.checked) {
+                        updateSdpWithIce();
+                    }
+                }
+            };
+
+            /**
+             * Handle ICE connection state changes.
+             * This tracks the actual connection progress.
+             */
+            pc.oniceconnectionstatechange = () => {
+                const iceState = pc.iceConnectionState;
+                log(`ICE connection state: ${iceState}`);
+
+                switch (iceState) {
+                    case 'checking':
+                        updateConnectionStatus('connecting');
+                        break;
+                    case 'connected':
+                    case 'completed':
+                        updateConnectionStatus('connected');
+                        log('Peer connection established!', 'success');
+                        break;
+                    case 'failed':
+                        log('ICE connection failed. Try exchanging ICE candidates.', 'error');
+                        updateConnectionStatus('disconnected');
+                        break;
+                    case 'disconnected':
+                        log('ICE connection disconnected', 'warning');
+                        break;
+                    case 'closed':
+                        log('ICE connection closed');
+                        updateConnectionStatus('disconnected');
+                        break;
+                }
+                updateButtonStates();
+            };
+
+            /**
+             * Handle overall connection state changes.
+             */
+            pc.onconnectionstatechange = () => {
+                log(`Connection state: ${pc.connectionState}`);
+                if (pc.connectionState === 'failed') {
+                    log('Connection failed. Please try again.', 'error');
+                }
+            };
+
+            /**
+             * Handle signaling state changes.
+             * Useful for debugging the offer/answer exchange.
+             */
+            pc.onsignalingstatechange = () => {
+                log(`Signaling state: ${pc.signalingState}`);
+            };
+
+            /**
+             * Handle ICE gathering state changes.
+             */
+            pc.onicegatheringstatechange = () => {
+                log(`ICE gathering state: ${pc.iceGatheringState}`);
+            };
+
+            /**
+             * Handle incoming data channels (for callee).
+             */
+            pc.ondatachannel = (event) => {
+                log('Received data channel from peer', 'success');
+                setupDataChannel(event.channel);
+            };
+
+            return pc;
+        }
+
+        /**
+         * Updates the SDP textarea with complete SDP after ICE gathering.
+         * Called when "wait for all ICE candidates" option is enabled.
+         */
+        function updateSdpWithIce() {
+            if (!state.peerConnection || !state.peerConnection.localDescription) return;
+
+            const sdp = {
+                type: state.peerConnection.localDescription.type,
+                sdp: state.peerConnection.localDescription.sdp
+            };
+
+            if (sdp.type === 'offer') {
+                elements.offerSdp.value = JSON.stringify(sdp, null, 2);
+                log('Offer SDP updated with all ICE candidates', 'success');
+            } else if (sdp.type === 'answer') {
+                elements.answerSdp.value = JSON.stringify(sdp, null, 2);
+                log('Answer SDP updated with all ICE candidates', 'success');
+            }
+        }
+
+        /**
+         * Creates an offer as the caller.
+         * This initiates the WebRTC connection process.
+         */
+        async function createOffer() {
+            log('Creating offer (Caller role)...');
+
+            try {
+                // Reset ICE candidates for new connection
+                state.iceCandidates = [];
+                state.iceGatheringComplete = false;
+                updateIceCount();
+
+                // Create peer connection
+                state.peerConnection = createPeerConnection();
+
+                // Create data channel (caller creates it)
+                const dataChannel = state.peerConnection.createDataChannel('chat', {
+                    ordered: true
+                });
+                setupDataChannel(dataChannel);
+                log('Created data channel for chat');
+
+                // Create and set local description (the offer)
+                const offer = await state.peerConnection.createOffer();
+                await state.peerConnection.setLocalDescription(offer);
+
+                // Display the offer SDP
+                const offerJson = {
+                    type: offer.type,
+                    sdp: offer.sdp
+                };
+                elements.offerSdp.value = JSON.stringify(offerJson, null, 2);
+                elements.offerSdp.readOnly = true;
+
+                updateRoleBadge('caller');
+                updateConnectionStatus('connecting');
+                log('Offer created successfully. Copy it and send to peer.', 'success');
+
+                if (elements.optWaitIce.checked) {
+                    log('Waiting for ICE gathering to complete before finalizing offer...');
+                }
+
+                updateButtonStates();
+            } catch (err) {
+                log(`Failed to create offer: ${err.message}`, 'error');
+                state.peerConnection = null;
+            }
+        }
+
+        /**
+         * Accepts an offer as the callee and generates an answer.
+         * This is the response to the caller's offer.
+         */
+        async function acceptOffer() {
+            log('Accepting offer (Callee role)...');
+
+            const offerText = elements.offerSdp.value.trim();
+            if (!offerText) {
+                log('Please paste an offer first', 'error');
+                return;
+            }
+
+            const offerJson = safeJsonParse(offerText);
+            if (!offerJson || !offerJson.type || !offerJson.sdp) {
+                log('Invalid offer format. Expected JSON with "type" and "sdp" fields.', 'error');
+                return;
+            }
+
+            if (offerJson.type !== 'offer') {
+                log(`Invalid SDP type: "${offerJson.type}". Expected "offer".`, 'error');
+                return;
+            }
+
+            try {
+                // Reset ICE candidates for new connection
+                state.iceCandidates = [];
+                state.iceGatheringComplete = false;
+                updateIceCount();
+
+                // Create peer connection
+                state.peerConnection = createPeerConnection();
+
+                // Set the remote description (the offer we received)
+                const offer = new RTCSessionDescription(offerJson);
+                await state.peerConnection.setRemoteDescription(offer);
+                log('Remote offer set successfully');
+
+                // Create and set local description (the answer)
+                const answer = await state.peerConnection.createAnswer();
+                await state.peerConnection.setLocalDescription(answer);
+
+                // Display the answer SDP
+                const answerJson = {
+                    type: answer.type,
+                    sdp: answer.sdp
+                };
+                elements.answerSdp.value = JSON.stringify(answerJson, null, 2);
+                elements.answerSdp.readOnly = true;
+                elements.offerSdp.readOnly = true;
+
+                updateRoleBadge('callee');
+                updateConnectionStatus('connecting');
+                log('Answer created successfully. Copy it and send back to caller.', 'success');
+
+                if (elements.optWaitIce.checked) {
+                    log('Waiting for ICE gathering to complete before finalizing answer...');
+                }
+
+                updateButtonStates();
+            } catch (err) {
+                log(`Failed to accept offer: ${err.message}`, 'error');
+                if (state.peerConnection) {
+                    state.peerConnection.close();
+                    state.peerConnection = null;
+                }
+            }
+        }
+
+        /**
+         * Accepts an answer as the caller.
+         * This completes the signaling exchange.
+         */
+        async function acceptAnswer() {
+            log('Accepting answer...');
+
+            if (state.role !== 'caller') {
+                log('Only the caller needs to accept an answer', 'error');
+                return;
+            }
+
+            const answerText = elements.answerSdp.value.trim();
+            if (!answerText) {
+                log('Please paste an answer first', 'error');
+                return;
+            }
+
+            const answerJson = safeJsonParse(answerText);
+            if (!answerJson || !answerJson.type || !answerJson.sdp) {
+                log('Invalid answer format. Expected JSON with "type" and "sdp" fields.', 'error');
+                return;
+            }
+
+            if (answerJson.type !== 'answer') {
+                log(`Invalid SDP type: "${answerJson.type}". Expected "answer".`, 'error');
+                return;
+            }
+
+            try {
+                const answer = new RTCSessionDescription(answerJson);
+                await state.peerConnection.setRemoteDescription(answer);
+
+                elements.answerSdp.readOnly = true;
+                log('Answer accepted successfully. Exchange ICE candidates to establish connection.', 'success');
+
+                updateButtonStates();
+            } catch (err) {
+                log(`Failed to accept answer: ${err.message}`, 'error');
+            }
+        }
+
+        // ============================================
+        // ICE CANDIDATE HANDLING
+        // ============================================
+
+        /**
+         * Adds received ICE candidates to the peer connection.
+         * ICE candidates help establish the optimal connection path.
+         */
+        async function addIceCandidates() {
+            const iceText = elements.incomingIce.value.trim();
+            if (!iceText) {
+                log('Please paste ICE candidates first', 'error');
+                return;
+            }
+
+            if (!state.peerConnection) {
+                log('No peer connection. Create or accept an offer first.', 'error');
+                return;
+            }
+
+            const candidates = safeJsonParse(iceText);
+            if (!candidates) {
+                return;
+            }
+
+            // Handle both single candidate and array of candidates
+            const candidateArray = Array.isArray(candidates) ? candidates : [candidates];
+
+            let addedCount = 0;
+            let errorCount = 0;
+
+            for (const candidate of candidateArray) {
+                try {
+                    if (candidate.candidate) {
+                        await state.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                        addedCount++;
+                    }
+                } catch (err) {
+                    log(`Failed to add ICE candidate: ${err.message}`, 'error');
+                    errorCount++;
+                }
+            }
+
+            if (addedCount > 0) {
+                log(`Added ${addedCount} ICE candidate(s) successfully`, 'success');
+                elements.incomingIce.value = '';
+            }
+            if (errorCount > 0) {
+                log(`Failed to add ${errorCount} ICE candidate(s)`, 'warning');
+            }
+
+            updateButtonStates();
+        }
+
+        // ============================================
+        // DATA CHANNEL (BONUS FEATURE)
+        // ============================================
+
+        /**
+         * Sets up event handlers for the data channel.
+         * Enables text chat between peers.
+         * @param {RTCDataChannel} channel - The data channel to set up
+         */
+        function setupDataChannel(channel) {
+            state.dataChannel = channel;
+
+            channel.onopen = () => {
+                log('Data channel opened', 'success');
+                updateButtonStates();
+            };
+
+            channel.onclose = () => {
+                log('Data channel closed');
+                state.dataChannel = null;
+                updateButtonStates();
+            };
+
+            channel.onerror = (error) => {
+                log(`Data channel error: ${error.message || 'Unknown error'}`, 'error');
+            };
+
+            channel.onmessage = (event) => {
+                displayChatMessage(event.data, false);
+            };
+        }
+
+        /**
+         * Sends a chat message through the data channel.
+         */
+        function sendChatMessage() {
+            const message = elements.chatInput.value.trim();
+            if (!message || !state.dataChannel) return;
+
+            try {
+                state.dataChannel.send(message);
+                displayChatMessage(message, true);
+                elements.chatInput.value = '';
+            } catch (err) {
+                log(`Failed to send message: ${err.message}`, 'error');
+            }
+        }
+
+        /**
+         * Displays a chat message in the chat panel.
+         * @param {string} message - The message text
+         * @param {boolean} isSent - Whether this message was sent by us
+         */
+        function displayChatMessage(message, isSent) {
+            // Remove placeholder text if present
+            const placeholder = elements.chatMessages.querySelector('.text-muted');
+            if (placeholder) {
+                placeholder.remove();
+            }
+
+            const messageEl = document.createElement('div');
+            messageEl.className = `chat-message ${isSent ? 'sent' : 'received'}`;
+            messageEl.textContent = message;
+
+            elements.chatMessages.appendChild(messageEl);
+            elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+        }
+
+        // ============================================
+        // CLEANUP
+        // ============================================
+
+        /**
+         * Cleans up all resources and resets the application.
+         * Called when hanging up or when errors occur.
+         */
+        function hangUp() {
+            log('Hanging up...');
+
+            // Close data channel
+            if (state.dataChannel) {
+                state.dataChannel.close();
+                state.dataChannel = null;
+            }
+
+            // Close peer connection
+            if (state.peerConnection) {
+                state.peerConnection.close();
+                state.peerConnection = null;
+                log('Peer connection closed');
+            }
+
+            // Stop local media
+            stopLocalMedia();
+
+            // Clear remote video
+            elements.remoteVideo.srcObject = null;
+
+            // Reset state
+            state.iceCandidates = [];
+            state.iceGatheringComplete = false;
+            state.role = null;
+            state.connectionState = 'disconnected';
+
+            // Reset UI
+            resetUI();
+
+            log('Call ended. Ready for new connection.', 'success');
+        }
+
+        // ============================================
+        // EVENT LISTENERS
+        // ============================================
+
+        // Main action buttons
+        elements.btnStartCamera.addEventListener('click', startLocalMedia);
+        elements.btnHangUp.addEventListener('click', hangUp);
+        elements.btnCreateOffer.addEventListener('click', createOffer);
+        elements.btnAcceptOffer.addEventListener('click', acceptOffer);
+        elements.btnAcceptAnswer.addEventListener('click', acceptAnswer);
+        elements.btnAddIce.addEventListener('click', addIceCandidates);
+
+        // Copy buttons
+        elements.copyOffer.addEventListener('click', () => {
+            copyToClipboard(elements.offerSdp.value, elements.copyOffer);
+        });
+
+        elements.copyAnswer.addEventListener('click', () => {
+            copyToClipboard(elements.answerSdp.value, elements.copyAnswer);
+        });
+
+        elements.copyIce.addEventListener('click', () => {
+            copyToClipboard(elements.outgoingIce.value, elements.copyIce);
+        });
+
+        // Chat
+        elements.btnSendChat.addEventListener('click', sendChatMessage);
+        elements.chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendChatMessage();
+            }
+        });
+
+        // Log controls
+        elements.btnCopyLog.addEventListener('click', () => {
+            const logText = Array.from(elements.logContainer.children)
+                .map(entry => entry.textContent)
+                .join('\n');
+            copyToClipboard(logText, elements.btnCopyLog);
+        });
+
+        elements.btnClearLog.addEventListener('click', () => {
+            elements.logContainer.innerHTML = '';
+            log('Log cleared');
+        });
+
+        // Help panel toggle
+        elements.helpToggle.addEventListener('click', () => {
+            const isActive = elements.helpToggle.classList.toggle('active');
+            elements.helpContent.classList.toggle('visible', isActive);
+            elements.helpToggle.setAttribute('aria-expanded', isActive);
+        });
+
+        // Textarea input events (for enabling/disabling buttons)
+        elements.offerSdp.addEventListener('input', updateButtonStates);
+        elements.answerSdp.addEventListener('input', updateButtonStates);
+        elements.incomingIce.addEventListener('input', updateButtonStates);
+
+        // Audio only option change
+        elements.optAudioOnly.addEventListener('change', () => {
+            log(`Audio only mode ${elements.optAudioOnly.checked ? 'enabled' : 'disabled'}`);
+        });
+
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+
+        /**
+         * Initializes the application on page load.
+         * Checks for WebRTC support and sets initial UI state.
+         */
+        function init() {
+            // Check for WebRTC support
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                log('WebRTC is not supported in this browser', 'error');
+                alert('Your browser does not support WebRTC. Please use Chrome, Firefox, Safari, or Edge.');
+                return;
+            }
+
+            if (!window.RTCPeerConnection) {
+                log('RTCPeerConnection is not supported in this browser', 'error');
+                alert('Your browser does not support RTCPeerConnection. Please use a modern browser.');
+                return;
+            }
+
+            // Check for clipboard API
+            if (!navigator.clipboard) {
+                log('Clipboard API not available. Copy buttons may not work.', 'warning');
+            }
+
+            // Set initial button states
+            updateButtonStates();
+
+            log('WebRTC Manual Signaling Demo ready. Click "Start Camera" to begin.', 'success');
+        }
+
+        // Run initialization when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    </script>
+</body>
+</html>
